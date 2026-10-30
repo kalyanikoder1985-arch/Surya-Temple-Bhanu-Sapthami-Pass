@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Event Pass · Sri Surya Devalayam</title>
+<style>
+  :root{--bg:#2a0610;--card:#fffaf0;--ink:#2b1b0e;--sub:#7a6650;--gold:#d4af37;--gold2:#f9e076;--err:#b3261e}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% -10%,#5a1626 0,var(--bg) 60%);color:#fff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;justify-content:center;padding:24px 16px 48px}
+  main{width:100%;max-width:420px}
+  header{text-align:center;margin:12px 0 22px}
+  .om{font-size:44px;line-height:1}
+  h1{margin:8px 0 2px;font-size:24px;color:var(--gold)}
+  header p{margin:0;color:#e8d9c4;font-size:14px}
+  .panel{background:var(--card);color:var(--ink);border-radius:20px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px}
+  label:first-child{margin-top:0}
+  input{width:100%;font-size:18px;padding:14px;border:1.5px solid #d9c9ad;border-radius:12px;background:#fff;color:var(--ink)}
+  input:focus{outline:none;border-color:var(--gold)}
+  .hint{font-size:12px;color:var(--sub);margin-top:6px}
+  button{width:100%;margin-top:18px;border:0;border-radius:999px;padding:15px;font-size:16px;font-weight:700;color:#3b2a05;background:linear-gradient(90deg,var(--gold),var(--gold2));cursor:pointer}
+  button:disabled{opacity:.55}
+  button.ghost{background:#efe6d3;color:var(--ink)}
+  .err{color:var(--err);font-size:14px;margin-top:12px;min-height:18px}
+  .pass{margin-top:18px;text-align:center}
+  .pass .evt{font-size:24px;font-weight:800;color:#7a1f2b;line-height:1.2}
+  .pass .evd{font-size:16px;font-weight:700;margin:4px 0 14px}
+  .pass h2{margin:0;font-size:20px}
+  .pass .meta{color:var(--sub);font-size:14px;margin:4px 0}
+  .pass canvas{width:240px;height:240px;margin:14px auto 6px;display:block;border-radius:12px;background:#fff}
+  .pid{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--sub);word-break:break-all}
+  .rules{margin-top:20px;font-size:13px;color:#e8d9c4;line-height:1.55}
+  .rules b{color:#fff}
+  .hidden{display:none}
+  hr{border:0;border-top:1px dashed #d9c9ad;margin:22px 0 4px}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="om">🕉️</div>
+    <h1>Sri Surya Devalayam</h1>
+    <p>Suryanarayana Swamy · Tirumalagiri</p>
+  </header>
+
+  <section class="panel" id="form">
+    <label for="phone">Your mobile number</label>
+    <input id="phone" type="tel" inputmode="numeric" autocomplete="tel" maxlength="14" placeholder="10-digit number">
+    <label for="code">Access code</label>
+    <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6-digit code you were given">
+    <div class="hint">The temple sent you this code along with this link.</div>
+    <div class="err" id="err" role="alert"></div>
+    <button id="go">Show my pass</button>
+  </section>
+
+  <section class="panel hidden" id="result"></section>
+
+  <div class="rules hidden" id="rules">
+    <b>At the gate:</b> show this QR to the volunteer. Each pass admits <b>one</b> person and works <b>once</b>.
+    If you step out, tell the volunteer to scan you out — you may come back in within <b>3 hours</b>.
+    Please keep a photo ID; the volunteer will check your name.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+const SUPABASE_URL = "https://jvohnxubvtczdjaeoaoa.supabase.co";
+const PUBLISHABLE_KEY = "sb_publishable_zLHjQXckVkqUtpxxYqroQQ_LmhFx_A1";   // public by design (also inside the apps)
+
+const $ = id => document.getElementById(id);
+const phoneEl = $("phone"), codeEl = $("code"), errEl = $("err"), goBtn = $("go");
+
+// A phone/code can be pre-filled from the link:  …/?p=9876543210&c=123456
+const q = new URLSearchParams(location.search);
+if (q.get("p")) phoneEl.value = q.get("p");
+if (q.get("c")) codeEl.value = q.get("c");
+
+goBtn.addEventListener("click", lookup);
+[phoneEl, codeEl].forEach(el => el.addEventListener("keydown", e => { if (e.key === "Enter") lookup(); }));
+
+async function lookup() {
+  errEl.textContent = "";
+  const phone = phoneEl.value.replace(/\D/g, "").slice(-10);
+  const code = codeEl.value.trim();
+  if (phone.length !== 10) return (errEl.textContent = "Enter your 10-digit mobile number.");
+  if (!/^\d{4,8}$/.test(code)) return (errEl.textContent = "Enter the numeric access code.");
+  goBtn.disabled = true; goBtn.textContent = "Checking…";
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_my_passes`, {
+      method: "POST",
+      headers: { "apikey": PUBLISHABLE_KEY, "Authorization": `Bearer ${PUBLISHABLE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_phone: phone, p_code: code }),
+    });
+    if (!r.ok) throw new Error("http " + r.status);
+    const d = await r.json();
+    if (d.status === "ok") return show(d.passes);
+    errEl.textContent =
+      d.status === "locked" ? "Too many wrong attempts. Please wait 15 minutes and try again." :
+      d.status === "invalid" ? "Please check the number and code." :
+      "No pass found for this number and code. Check both, or ask the temple volunteer.";
+  } catch (e) {
+    errEl.textContent = "Couldn't reach the temple server. Check your internet and try again.";
+  } finally {
+    goBtn.disabled = false; goBtn.textContent = "Show my pass";
+  }
+}
+
+function show(passes) {
+  $("form").classList.add("hidden");
+  const box = $("result"); box.innerHTML = ""; box.classList.remove("hidden"); $("rules").classList.remove("hidden");
+  passes.forEach((p, i) => {
+    const wrap = document.createElement("div"); wrap.className = "pass";
+    if (i) wrap.appendChild(document.createElement("hr"));
+    const date = fmtDate(p.slot_date);
+    wrap.insertAdjacentHTML("beforeend",
+      `<div class="evt">${esc(p.event_title || "Event")}</div>` +
+      `<div class="evd">${esc(date)} · ${esc(p.slot_time)} slot</div>` +
+      `<h2>${esc(p.name)}</h2>` +
+      (p.gothram ? `<div class="meta">Gothram: ${esc(p.gothram)}</div>` : ""));
+    const canvas = document.createElement("canvas"); wrap.appendChild(canvas); drawQr(canvas, p.pass_id, 720);
+    wrap.insertAdjacentHTML("beforeend", `<div class="pid">${esc(p.pass_id)}</div>`);
+    const dl = document.createElement("button"); dl.textContent = "Download pass (image)";
+    dl.onclick = () => downloadPass(p, date);
+    wrap.appendChild(dl);
+    if (navigator.canShare) {
+      const sh = document.createElement("button"); sh.className = "ghost"; sh.textContent = "Share / save to phone";
+      sh.onclick = () => sharePass(p, date); wrap.appendChild(sh);
+    }
+    box.appendChild(wrap);
+  });
+}
+
+// ISO-8859-1 byte mode — the same bytes the temple app's own QR images use, so the gate scanner reads it identically.
+function qrMatrix(text) {
+  const qr = qrcode(0, "M");
+  qr.addData(text, "Byte");
+  qr.make();
+  return qr;
+}
+function drawQr(canvas, text, size) {
+  const qr = qrMatrix(text), n = qr.getModuleCount(), quiet = 4, cell = Math.floor(size / (n + quiet * 2));
+  const px = cell * (n + quiet * 2);
+  canvas.width = canvas.height = px;
+  const g = canvas.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, px, px); g.fillStyle = "#000";
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) g.fillRect((c + quiet) * cell, (r + quiet) * cell, cell, cell);
+}
+
+function cardCanvas(p, date) {
+  const W = 900, H = 1420, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const grad = g.createLinearGradient(0, 0, 0, H); grad.addColorStop(0, "#5a1626"); grad.addColorStop(1, "#2a0610");
+  g.fillStyle = grad; g.fillRect(0, 0, W, H);
+  g.textAlign = "center"; g.fillStyle = "#d4af37"; g.font = "bold 54px sans-serif"; g.fillText("Sri Surya Devalayam", W / 2, 110);
+  g.fillStyle = "#e8d9c4"; g.font = "30px sans-serif"; g.fillText("Suryanarayana Swamy · Tirumalagiri", W / 2, 160);
+  g.fillStyle = "#fffaf0"; roundRect(g, 60, 210, W - 120, H - 270, 36); g.fill();
+  g.fillStyle = "#7a1f2b"; g.font = "bold 58px sans-serif"; g.fillText(trunc(g, p.event_title || "Event", W - 200), W / 2, 300);
+  g.fillStyle = "#2b1b0e"; g.font = "bold 38px sans-serif"; g.fillText(date, W / 2, 358);
+  g.fillStyle = "#7a6650"; g.font = "30px sans-serif"; g.fillText(p.slot_time + " slot", W / 2, 402);
+  g.fillStyle = "#2b1b0e"; g.font = "bold 44px sans-serif"; g.fillText(trunc(g, p.name, W - 200), W / 2, 480);
+  g.fillStyle = "#7a6650"; g.font = "32px sans-serif";
+  let y = 480; if (p.gothram) { y += 46; g.fillText("Gothram: " + p.gothram, W / 2, y); }
+  const qc = document.createElement("canvas"); drawQr(qc, p.pass_id, 640);
+  g.drawImage(qc, (W - 640) / 2, y + 40, 640, 640);
+  g.font = "26px monospace"; g.fillText(p.pass_id, W / 2, y + 740);
+  g.font = "28px sans-serif"; g.fillText("One entry per pass · Re-entry within 3 hours of stepping out", W / 2, H - 130);
+  g.fillText("Keep a photo ID — the volunteer will check your name", W / 2, H - 90);
+  return c;
+}
+function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+function trunc(g, s, max) { while (g.measureText(s).width > max && s.length > 3) s = s.slice(0, -2); return s; }
+function fileName(p) { return "event-pass-" + p.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") + ".png"; }
+
+function downloadPass(p, date) {
+  cardCanvas(p, date).toBlob(b => {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = fileName(p);
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }, "image/png");
+}
+function sharePass(p, date) {
+  cardCanvas(p, date).toBlob(async b => {
+    const f = new File([b], fileName(p), { type: "image/png" });
+    try { await navigator.share({ files: [f], title: "Event pass" }); } catch (e) { /* user cancelled */ }
+  }, "image/png");
+}
+
+function fmtDate(iso) { const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])); }
+</script>
+</body>
+</html>
